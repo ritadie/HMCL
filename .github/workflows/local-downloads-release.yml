@@ -19,7 +19,8 @@ concurrency:
 jobs:
   detect:
     if: github.repository != 'HMCL-dev/HMCL'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
       changed: ${{ steps.detect.outputs.changed }}
       upstream: ${{ steps.detect.outputs.upstream }}
@@ -37,7 +38,7 @@ jobs:
   build:
     needs: detect
     if: needs.detect.outputs.changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
@@ -87,7 +88,8 @@ jobs:
 
   publish:
     needs: [detect, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
