@@ -11,10 +11,12 @@ GitHub 定时调度可能延迟，不保证准点。
 补丁不能干净应用、构建失败、测试失败时不会发布。上游源码在隔离目录检出，
 维护仓库不会被上游覆盖，也不需要机器人向默认分支推送同步提交。
 
-发布包含 EXE/JAR/SH、各文件校验和、完整修改版源码 `patched-source.zip`、
-补丁/构建配方及 `provenance.json`。版本类型是 unofficial，版本号含 local-downloads。
+发布仅包含 EXE 和 GitHub 自动生成的 Source code (zip/tar.gz)。
+发布标签指向当次编译的完整修改版源码快照，保证两个源码归档与 EXE 对应。
+版本类型是 unofficial，版本号含 local-downloads。
 每版以 GitHub prerelease 发布，保留历史版本；不会替换官方发布。
-构建任务只有只读权限，发布任务才有 contents:write，凭据不留在源码检出目录。
+构建任务只有只读权限，发布任务才有 contents:write，用于推送源码标签和创建 Release。
+源码 Git bundle 与发布说明只用于工作流内部传递，不作为 Release 附件。
 
 ## 启用
 

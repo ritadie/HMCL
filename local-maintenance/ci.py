@@ -1,5 +1,4 @@
 """Detect upstream changes, apply the reviewed patch, and package release sources."""
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,7 +8,6 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'upstream-source'
@@ -57,44 +55,35 @@ def prepare():
 def package():
     dist = ROOT / 'dist'
     dist.mkdir(exist_ok=True)
-    artifacts = list((SOURCE / 'HMCL/build/libs').glob('HMCL-*'))
-    for extension in ('.exe', '.jar', '.sh'):
-        if not any(p.suffix == extension for p in artifacts):
-            raise RuntimeError(f'Missing artifact: {extension}')
-    for path in artifacts:
-        if path.is_file():
-            shutil.copy2(path, dist / path.name)
-    metadata = dict(upstream_repository='https://github.com/HMCL-dev/HMCL',
-                    upstream_sha=os.environ['UPSTREAM_SHA'],
-                    maintenance_repository=os.environ['GITHUB_REPOSITORY'],
-                    maintenance_sha=os.environ['GITHUB_SHA'],
-                    patch_sha256=hashlib.sha256(PATCH.read_bytes()).hexdigest(),
-                    workflow_run=f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}')
-    (dist / 'provenance.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
-    with zipfile.ZipFile(dist / 'patched-source.zip', 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-        # Use the Git index to exclude build outputs while reading the patched working files.
-        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=SOURCE).decode().split('\0')
-        for name in filter(None, tracked):
-            archive.write(SOURCE / name, 'source/' + name)
-        for path in (ROOT / 'local-maintenance').rglob('*'):
-            if path.is_file() and '__pycache__' not in path.parts:
-                archive.write(path, 'maintenance/' + path.relative_to(ROOT).as_posix())
-        archive.write(ROOT / '.github/workflows/local-downloads-release.yml', 'maintenance/workflow.yml')
-        archive.writestr('provenance.json', json.dumps(metadata, indent=2))
+    executables = list((SOURCE / 'HMCL/build/libs').glob('HMCL-*.exe'))
+    if len(executables) != 1:
+        raise RuntimeError(f'Expected one EXE, found {len(executables)}')
+    shutil.copy2(executables[0], dist / executables[0].name)
+    # An independent source snapshot makes GitHub's automatic source archives
+    # match this build, even when upstream has advanced beyond the maintenance branch.
+    git('add', '--', TARGET, cwd=SOURCE)
+    tree = git('write-tree', cwd=SOURCE)
+    source_date = git('show', '-s', '--format=%cI', 'HEAD', cwd=SOURCE)
+    source_commit = subprocess.check_output(
+        ['git', '-c', 'user.name=github-actions[bot]',
+         '-c', 'user.email=41898282+github-actions[bot]@users.noreply.github.com',
+         'commit-tree', tree, '-m', f'Unofficial patched source for upstream {os.environ["UPSTREAM_SHA"]}'],
+        cwd=SOURCE, text=True,
+        env={**os.environ, 'GIT_AUTHOR_DATE': source_date, 'GIT_COMMITTER_DATE': source_date}).strip()
+    tag_ref = 'refs/tags/' + os.environ['RELEASE_TAG']
+    git('update-ref', tag_ref, source_commit, cwd=SOURCE)
+    git('bundle', 'create', str(dist / 'source.bundle'), tag_ref, cwd=SOURCE)
     notes = (
         '# Unofficial HMCL local-downloads build\n\n'
         'Modified version: the network-region download gate returns false. '
         'Machine-region detection and original copyright notices are retained.\n\n'
-        f'Upstream commit: `{metadata["upstream_sha"]}`\n\n'
-        f'Maintenance commit: `{metadata["maintenance_sha"]}`\n\n'
-        'Includes EXE/JAR/SH, checksums, exact patched source and build provenance. '
+        f'Upstream commit: `{os.environ["UPSTREAM_SHA"]}`\n\n'
+        f'Maintenance commit: `{os.environ["GITHUB_SHA"]}`\n\n'
+        'Download the EXE below. GitHub Source code (zip/tar.gz) contains the exact patched source. '
         'Compilation and HMCL tests passed; GUI installation and game launch were not verified in CI.\n\n'
         'Microsoft login and CurseForge require separately configured API credentials. '
         'This build is unofficial and is not signed by the HMCL project.\n')
     (dist / 'RELEASE_NOTES.md').write_text(notes, encoding='utf-8')
-    sums = ''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
-                   for p in sorted(dist.iterdir()) if p.is_file() and p.name != 'SHA256SUMS')
-    (dist / 'SHA256SUMS').write_text(sums, encoding='utf-8')
 
 
 if __name__ == '__main__':

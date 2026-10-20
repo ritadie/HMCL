@@ -68,7 +68,7 @@ jobs:
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
           MICROSOFT_AUTH_ID: ${{ secrets.MICROSOFT_AUTH_ID }}
           CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
-      - name: Package binaries, exact patched source and provenance
+      - name: Prepare EXE and matching source tag
         run: python3 local-maintenance/ci.py package
         env:
           UPSTREAM_SHA: ${{ needs.detect.outputs.upstream }}
@@ -93,6 +93,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
         with:
           name: unofficial-release
@@ -103,16 +104,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.detect.outputs.tag }}
-          MAINTENANCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          git fetch ./dist/source.bundle "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          git push origin "refs/tags/$RELEASE_TAG"
           if ! gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > draft-state.txt; then
-            gh release create "$RELEASE_TAG" --draft --prerelease \
-              --target "$MAINTENANCE_SHA" --title "Unofficial HMCL $RELEASE_TAG" \
+            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
+              --title "Unofficial HMCL $RELEASE_TAG" \
               --notes-file dist/RELEASE_NOTES.md
           elif [ "$(cat draft-state.txt)" != true ]; then
             echo 'Release already published; leaving it unchanged.'
             exit 0
           fi
-          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release upload "$RELEASE_TAG" dist/HMCL-*.exe --clobber
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
