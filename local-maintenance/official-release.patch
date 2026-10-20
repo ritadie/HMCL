@@ -1,0 +1,47 @@
+diff --git a/HMCL/src/main/java/org/jackhuang/hmcl/util/RegionUtils.java b/HMCL/src/main/java/org/jackhuang/hmcl/util/RegionUtils.java
+--- a/HMCL/src/main/java/org/jackhuang/hmcl/util/RegionUtils.java
++++ b/HMCL/src/main/java/org/jackhuang/hmcl/util/RegionUtils.java
+@@ -90,25 +90,9 @@
+         }
+     }
+ 
++    /// Modified build: keep downloads available without querying IP geolocation.
+     public static boolean isIsChinaMainlandNetwork() {
+-        if (!IS_CHINA_MAINLAND_MACHINE) {
+-            return false;
+-        }
+-
+-        Boolean value = isChinaMainlandNetwork;
+-        if (value != null)
+-            return value;
+-
+-        synchronized (RegionUtils.class) {
+-            value = isChinaMainlandNetwork;
+-
+-            if (value != null)
+-                return value;
+-
+-            boolean result = checkChinaMainlandNetwork();
+-            isChinaMainlandNetwork = result;
+-            return result;
+-        }
++        return false;
+     }
+ 
+     private RegionUtils() {
+diff --git a/HMCL/src/main/java/org/jackhuang/hmcl/Metadata.java b/HMCL/src/main/java/org/jackhuang/hmcl/Metadata.java
+--- a/HMCL/src/main/java/org/jackhuang/hmcl/Metadata.java
++++ b/HMCL/src/main/java/org/jackhuang/hmcl/Metadata.java
+@@ -34,8 +34,10 @@
+     private Metadata() {
+     }
+ 
+-    public static final String NAME = "HMCL";
+-    public static final String FULL_NAME = "Hello Minecraft! Launcher";
++    /// Distinguishes this modified application while retaining upstream version numbers.
++    public static final String NAME = "HMCL Modified";
++    /// Full display name of the unofficial modified application.
++    public static final String FULL_NAME = "Hello Minecraft! Launcher (Modified)";
+     public static final String VERSION = System.getProperty("hmcl.version.override", JarUtils.getAttribute("hmcl.version", "@develop@"));
+ 
+     /// Explicit Application User Model ID used for Windows taskbar grouping and pinning.

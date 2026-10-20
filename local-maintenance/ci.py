@@ -7,46 +7,52 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+import urllib.error
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'upstream-source'
-PATCH = ROOT / 'local-maintenance/region-downloads.patch'
+PATCH = ROOT / 'local-maintenance/official-release.patch'
 TARGET = 'HMCL/src/main/java/org/jackhuang/hmcl/util/RegionUtils.java'
+METADATA = 'HMCL/src/main/java/org/jackhuang/hmcl/Metadata.java'
+TARGETS = sorted([TARGET, METADATA])
 
 
 def git(*args, cwd=ROOT):
     return subprocess.check_output(['git', *args], cwd=cwd, text=True).strip()
 
 
-def detect():
-    sha = git('ls-remote', 'https://github.com/HMCL-dev/HMCL.git', 'refs/heads/main').split()[0]
-    if not re.fullmatch(r'[0-9a-f]{40}', sha):
-        raise RuntimeError('Invalid upstream SHA')
-    with urllib.request.urlopen(
-            f'https://raw.githubusercontent.com/HMCL-dev/HMCL/{sha}/config/project.properties', timeout=30) as response:
-        config = response.read().decode('utf-8')
-    match = re.search(r'^versionRoot=(\d+\.\d+)\s*$', config, re.MULTILINE)
-    if match is None:
-        raise RuntimeError('Upstream versionRoot missing or unsupported')
-    version_root = match[1] + '.0-local'
-    build_number = str(int(os.environ['GITHUB_RUN_NUMBER']))
-    version = version_root + '.' + build_number
-    tag = 'v' + version
-    build_key = f'<!-- build-key:{sha}:{os.environ["GITHUB_SHA"]} -->'
+def github_json(path):
     request = urllib.request.Request(
-        f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/releases?per_page=100',
+        'https://api.github.com' + path,
         headers={'Authorization': f'Bearer {os.environ["GH_TOKEN"]}',
                  'Accept': 'application/vnd.github+json'})
     with urllib.request.urlopen(request, timeout=30) as response:
-        releases = json.load(response)
-    previous = next((r for r in releases if build_key in (r.get('body') or '')), None)
+        return json.load(response)
+
+
+def detect():
+    releases = github_json('/repos/HMCL-dev/HMCL/releases?per_page=100')
+    candidates = [r for r in releases if not r['draft']
+                  and re.fullmatch(r'v\d+(?:\.\d+){2,3}', r['tag_name'])]
+    if not candidates:
+        raise RuntimeError('No supported official release found')
+    latest = max(candidates, key=lambda r: r['published_at'])
+    tag = latest['tag_name']
+    version = tag[1:]
+    version_root, build_number = version.rsplit('.', 1)
+    refs = dict(line.split()[::-1] for line in git(
+        'ls-remote', 'https://github.com/HMCL-dev/HMCL.git',
+        f'refs/tags/{tag}', f'refs/tags/{tag}^{{}}').splitlines())
+    sha = refs.get(f'refs/tags/{tag}^{{}}', refs.get(f'refs/tags/{tag}', ''))
+    if not re.fullmatch(r'[0-9a-f]{40}', sha):
+        raise RuntimeError('Official release tag did not resolve to a commit')
+    try:
+        previous = github_json(f'/repos/{os.environ["GITHUB_REPOSITORY"]}/releases/tags/{tag}')
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+        previous = None
     changed = previous is None or previous['draft']
-    if previous is not None:
-        tag = previous['tag_name']
-        if not re.fullmatch(r'v\d+\.\d+\.0-local\.[1-9]\d*', tag):
-            raise RuntimeError('Unexpected tag for matching build')
-        version = tag[1:]
-        version_root, build_number = version.rsplit('.', 1)
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
         output.write(f'upstream={sha}\ntag={tag}\nchanged={str(changed).lower()}\n'
                      f'version={version}\nversion_root={version_root}\nbuild_number={build_number}\n')
@@ -58,11 +64,13 @@ def prepare():
     subprocess.run(['git', 'apply', str(PATCH)], cwd=SOURCE, check=True)
     subprocess.run(['git', 'diff', '--check'], cwd=SOURCE, check=True)
     changed = git('diff', '--name-only', cwd=SOURCE).splitlines()
-    if changed != [TARGET]:
+    if changed != TARGETS:
         raise RuntimeError(f'Unexpected patch scope: {changed}')
     if not re.search(r'public static boolean isIsChinaMainlandNetwork\(\)\s*\{\s*return false;\s*\}',
                      (SOURCE / TARGET).read_text(encoding='utf-8')):
         raise RuntimeError('Expected download decision missing')
+    if 'public static final String NAME = "HMCL Modified";' not in (SOURCE / METADATA).read_text(encoding='utf-8'):
+        raise RuntimeError('Modified application name missing')
 
 
 def package():
@@ -74,7 +82,7 @@ def package():
     shutil.copy2(executables[0], dist / executables[0].name)
     # An independent source snapshot makes GitHub's automatic source archives
     # match this build, even when upstream has advanced beyond the maintenance branch.
-    git('add', '--', TARGET, cwd=SOURCE)
+    git('add', '--', *TARGETS, cwd=SOURCE)
     tree = git('write-tree', cwd=SOURCE)
     source_date = git('show', '-s', '--format=%cI', 'HEAD', cwd=SOURCE)
     source_commit = subprocess.check_output(
