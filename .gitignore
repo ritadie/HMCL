@@ -81,3 +81,5 @@ language-subtag-registry
 # Isolated upstream checkout and release staging for local maintenance CI
 /upstream-source/
 /dist/
+__pycache__/
+*.pyc
