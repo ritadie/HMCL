@@ -77,3 +77,7 @@ language-subtag-registry
 !/.gemini/config.yaml
 .codex
 /.gradle-*/
+
+# Isolated upstream checkout and release staging for local maintenance CI
+/upstream-source/
+/dist/

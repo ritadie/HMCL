@@ -107,21 +107,9 @@ public final class RegionUtils {
         }
     }
 
+    /// Local unofficial build: keep downloads available without querying IP geolocation.
     public static boolean isIsChinaMainlandNetwork() {
-        Boolean value = isChinaMainlandNetwork;
-        if (value != null)
-            return value;
-
-        synchronized (RegionUtils.class) {
-            value = isChinaMainlandNetwork;
-
-            if (value != null)
-                return value;
-
-            boolean result = checkChinaMainlandNetwork();
-            isChinaMainlandNetwork = result;
-            return result;
-        }
+        return false;
     }
 
     private RegionUtils() {

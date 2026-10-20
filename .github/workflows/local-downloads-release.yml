@@ -1,0 +1,116 @@
+name: Unofficial upstream build and release
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/local-downloads-release.yml'
+      - 'local-maintenance/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unofficial-upstream-release
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    if: github.repository != 'HMCL-dev/HMCL'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+      upstream: ${{ steps.detect.outputs.upstream }}
+      tag: ${{ steps.detect.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - id: detect
+        name: Detect upstream main and unpublished build
+        run: python3 local-maintenance/ci.py detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: HMCL-dev/HMCL
+          ref: ${{ needs.detect.outputs.upstream }}
+          path: upstream-source
+          persist-credentials: false
+      - name: Apply and check local patch
+        run: python3 local-maintenance/ci.py prepare
+      - uses: actions/setup-java@v6
+        with:
+          distribution: liberica
+          java-version: '25'
+          java-package: jdk+fx
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Compile executables and run tests
+        working-directory: upstream-source
+        run: xvfb-run --auto-servernum bash ./gradlew --no-daemon --console=plain :HMCL:makeExecutables :HMCL:test
+        env:
+          VERSION_TYPE: unofficial
+          VERSION_ROOT: '3.17.local-downloads'
+          GITHUB_SHA: ${{ needs.detect.outputs.upstream }}
+          JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
+          MICROSOFT_AUTH_ID: ${{ secrets.MICROSOFT_AUTH_ID }}
+          CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+      - name: Package binaries, exact patched source and provenance
+        run: python3 local-maintenance/ci.py package
+        env:
+          UPSTREAM_SHA: ${{ needs.detect.outputs.upstream }}
+          RELEASE_TAG: ${{ needs.detect.outputs.tag }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unofficial-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: failed-build-reports
+          path: upstream-source/**/build/reports/
+
+  publish:
+    needs: [detect, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: unofficial-release
+          path: dist
+      - name: Upload complete draft then publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.detect.outputs.tag }}
+          MAINTENANCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > draft-state.txt; then
+            gh release create "$RELEASE_TAG" --draft --prerelease \
+              --target "$MAINTENANCE_SHA" --title "Unofficial HMCL $RELEASE_TAG" \
+              --notes-file dist/RELEASE_NOTES.md
+          elif [ "$(cat draft-state.txt)" != true ]; then
+            echo 'Release already published; leaving it unchanged.'
+            exit 0
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
