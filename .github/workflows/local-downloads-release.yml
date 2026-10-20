@@ -25,6 +25,9 @@ jobs:
       changed: ${{ steps.detect.outputs.changed }}
       upstream: ${{ steps.detect.outputs.upstream }}
       tag: ${{ steps.detect.outputs.tag }}
+      version: ${{ steps.detect.outputs.version }}
+      version_root: ${{ steps.detect.outputs.version_root }}
+      build_number: ${{ steps.detect.outputs.build_number }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -63,7 +66,8 @@ jobs:
         run: xvfb-run --auto-servernum bash ./gradlew --no-daemon --console=plain :HMCL:makeExecutables :HMCL:test
         env:
           VERSION_TYPE: unofficial
-          VERSION_ROOT: '3.17.local-downloads'
+          VERSION_ROOT: ${{ needs.detect.outputs.version_root }}
+          BUILD_NUMBER: ${{ needs.detect.outputs.build_number }}
           GITHUB_SHA: ${{ needs.detect.outputs.upstream }}
           JAVA_TOOL_OPTIONS: -Djava.awt.headless=true
           MICROSOFT_AUTH_ID: ${{ secrets.MICROSOFT_AUTH_ID }}
@@ -104,17 +108,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.detect.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.detect.outputs.version }}
         run: |
           set -euo pipefail
           git fetch ./dist/source.bundle "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           git push origin "refs/tags/$RELEASE_TAG"
           if ! gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > draft-state.txt; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
-              --title "Unofficial HMCL $RELEASE_TAG" \
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "HMCL $RELEASE_VERSION（修改版）" \
               --notes-file dist/RELEASE_NOTES.md
           elif [ "$(cat draft-state.txt)" != true ]; then
             echo 'Release already published; leaving it unchanged.'
             exit 0
           fi
           gh release upload "$RELEASE_TAG" dist/HMCL-*.exe --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
